@@ -33,7 +33,7 @@ import static java.lang.String.format;
 @OptionsMenu(R.menu.actionbar)
 public class PDFViewActivity extends SherlockActivity implements OnPageChangeListener {
 
-    public static final String SAMPLE_FILE = "sample.pdf";
+    public static final String SAMPLE_FILE = "yuchaioa.pdf";
 
     public static final String ABOUT_FILE = "about.pdf";
 
@@ -64,6 +64,8 @@ public class PDFViewActivity extends SherlockActivity implements OnPageChangeLis
         pdfView.fromAsset(assetFileName)
                 .defaultPage(pageNumber)
                 .onPageChange(this)
+                .swipeVertical(true)
+                .enableSwipe(true)
                 .load();
     }
 

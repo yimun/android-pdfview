@@ -314,6 +314,7 @@ public class PDFView extends SurfaceView {
 
     @Override
     protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
         recycle();
     }
 
