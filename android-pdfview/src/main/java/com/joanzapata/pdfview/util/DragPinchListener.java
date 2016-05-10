@@ -19,7 +19,9 @@
 package com.joanzapata.pdfview.util;
 
 import android.graphics.PointF;
+import android.util.Log;
 import android.view.MotionEvent;
+import android.view.VelocityTracker;
 import android.view.View;
 import android.view.View.OnTouchListener;
 import android.os.Handler;
@@ -79,6 +81,8 @@ public class DragPinchListener implements OnTouchListener {
         /** Called when a drag event stops */
         void endDrag(float x, float y);
 
+        void onFling(float velocityX, float velocityY);
+
     }
 
     /** Implement this interface to receive Pinch events */
@@ -124,9 +128,26 @@ public class DragPinchListener implements OnTouchListener {
 
     private long lastClickTime;
 
+    private VelocityTracker mVelocityTracker;
+
+    private void obtainVelocityTracker(MotionEvent event) {
+        if(mVelocityTracker == null) {
+            mVelocityTracker = VelocityTracker.obtain();
+        }
+        mVelocityTracker.addMovement(event);
+    }
+
+    private void releaseVelocityTracker() {
+        if(mVelocityTracker != null) {
+            mVelocityTracker.recycle();
+            mVelocityTracker = null;
+        }
+    }
+
     @Override
     public boolean onTouch(View v, MotionEvent event) {
         mView = v ;
+        obtainVelocityTracker(event);
         switch (event.getAction()) {
 
             // NORMAL CASE : FIRST POINTER DOWN
@@ -153,6 +174,13 @@ public class DragPinchListener implements OnTouchListener {
 
             // NORMAL CASE : FIRST POINTER UP
             case MotionEvent.ACTION_UP:
+                mVelocityTracker.computeCurrentVelocity(1000);
+                if(onDragListener != null) {
+                    onDragListener.onFling(mVelocityTracker.getXVelocity(),
+                            mVelocityTracker.getYVelocity());
+                }
+                releaseVelocityTracker();
+
                 // End everything
                 state = State.NONE;
                 endDrag();

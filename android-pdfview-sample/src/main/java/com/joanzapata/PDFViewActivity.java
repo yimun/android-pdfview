@@ -19,11 +19,15 @@
 package com.joanzapata;
 
 import android.content.Intent;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
 import android.util.Log;
 import com.actionbarsherlock.app.SherlockActivity;
 import com.actionbarsherlock.view.Menu;
 import com.googlecode.androidannotations.annotations.*;
 import com.joanzapata.pdfview.PDFView;
+import com.joanzapata.pdfview.listener.OnDrawListener;
 import com.joanzapata.pdfview.listener.OnPageChangeListener;
 import com.joanzapata.pdfview.sample.R;
 
@@ -31,7 +35,8 @@ import static java.lang.String.format;
 
 @EActivity(R.layout.activity_main)
 @OptionsMenu(R.menu.actionbar)
-public class PDFViewActivity extends SherlockActivity implements OnPageChangeListener {
+public class PDFViewActivity extends SherlockActivity implements OnPageChangeListener,
+        OnDrawListener {
 
     public static final String SAMPLE_FILE = "yuchaioa.pdf";
 
@@ -64,8 +69,8 @@ public class PDFViewActivity extends SherlockActivity implements OnPageChangeLis
         pdfView.fromAsset(assetFileName)
                 .defaultPage(pageNumber)
                 .onPageChange(this)
-                .swipeVertical(true)
                 .enableSwipe(true)
+                .onDraw(this)
                 .load();
     }
 
@@ -86,5 +91,23 @@ public class PDFViewActivity extends SherlockActivity implements OnPageChangeLis
 
     private boolean displaying(String fileName) {
         return fileName.equals(pdfName);
+    }
+
+    @Override
+    public void onLayerDrawn(Canvas canvas, float pageWidth, float pageHeight, int displayedPage) {
+
+    }
+
+    private Paint mPaint = new Paint() {
+        {
+            setColor(Color.RED);
+            setAntiAlias(true);
+        }
+    };
+
+
+    @Override
+    public void onWholeDrawn(Canvas canvas, float wholeWidth, float wholeHeight) {
+        canvas.drawLine(wholeWidth / 2, 0, wholeWidth / 2, wholeHeight, mPaint);
     }
 }

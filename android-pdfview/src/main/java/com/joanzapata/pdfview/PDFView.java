@@ -24,7 +24,11 @@ import android.graphics.Paint.Style;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.util.AttributeSet;
-import android.view.SurfaceView;
+import android.util.Log;
+import android.view.animation.DecelerateInterpolator;
+import android.widget.FrameLayout;
+import android.widget.Scroller;
+
 import com.joanzapata.pdfview.exception.FileNotFoundException;
 import com.joanzapata.pdfview.listener.OnDrawListener;
 import com.joanzapata.pdfview.listener.OnLoadCompleteListener;
@@ -61,7 +65,7 @@ import static com.joanzapata.pdfview.util.Constants.Cache.CACHE_SIZE;
  *         using {@link #load(Uri, OnLoadCompleteListener, int[])}. In this
  *         particular case, a userPage of 5 can refer to a documentPage of 17.
  */
-public class PDFView extends SurfaceView {
+public class PDFView extends FrameLayout {
 
     private static final String TAG = PDFView.class.getSimpleName();
 
@@ -124,12 +128,6 @@ public class PDFView extends SurfaceView {
     /** The zoom level, always >= 1 */
     private float zoom = 1f;
 
-    /** Coordinates of the left mask on the screen */
-    private RectF leftMask;
-
-    /** Coordinates of the right mask on the screen */
-    private RectF rightMask;
-
     /** True if the PDFView has been recycled */
     private boolean recycled = true;
 
@@ -180,9 +178,9 @@ public class PDFView extends SurfaceView {
     private int defaultPage = 0;
 
     private boolean userWantsMinimap = false;
+
+    private Scroller mScroller;
     
-    /** True if should scroll through pages vertically instead of horizontally */
-    private boolean swipeVertical = false;
 
     /** Construct the initial view */
     public PDFView(Context context, AttributeSet set) {
@@ -207,6 +205,8 @@ public class PDFView extends SurfaceView {
         // A surface view does not call
         // onDraw() as a default but we need it.
         setWillNotDraw(false);
+
+        mScroller = new Scroller(context, new DecelerateInterpolator());
     }
 
     private void load(Uri uri, OnLoadCompleteListener listener) {
@@ -244,7 +244,12 @@ public class PDFView extends SurfaceView {
         showPage(page - 1);
     }
 
-    void showPage(int pageNb) {
+    /**
+     * Main method to load change current page and start process parts around
+     * current page
+     * @param pageNb
+     */
+    public void showPage(int pageNb) {
         state = State.SHOWN;
 
         // Check the page number and makes the
@@ -259,17 +264,25 @@ public class PDFView extends SurfaceView {
             }
         }
 
-        // Reset the zoom and center the page on the screen
-        resetZoom();
-        if (swipeVertical)
-        	animationManager.startYAnimation(currentYOffset, calculateCenterOffsetForPage(pageNb));
-        else
-        	animationManager.startXAnimation(currentXOffset, calculateCenterOffsetForPage(pageNb));
         loadPages();
 
         if (onPageChangeListener != null) {
             onPageChangeListener.onPageChanged(currentPage + 1, getPageCount());
         }
+    }
+
+    public void determinedCurrentPage() {
+        // 在改变方向后需要计算高度
+        post(new Runnable() {
+            @Override
+            public void run() {
+                // calculate page
+                float centerY = -currentYOffset + getHeight() * 0.5f;
+                int curPage = (int)(centerY / toCurrentScale(optimalPageHeight));
+                showPage(curPage);
+            }
+        });
+
     }
 
     public int getPageCount() {
@@ -321,12 +334,9 @@ public class PDFView extends SurfaceView {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         animationManager.stopAll();
-        calculateOptimalWidthAndHeight();
-        loadPages();
-        if (swipeVertical)
-        	moveTo(currentXOffset, calculateCenterOffsetForPage(currentFilteredPage));
-        else
-        	moveTo(calculateCenterOffsetForPage(currentFilteredPage), currentYOffset);
+        calculateOptimalWidthAndHeight(w, h);
+        moveTo(0, 0);
+        determinedCurrentPage();
     }
 
     @Override
@@ -361,7 +371,7 @@ public class PDFView extends SurfaceView {
         // abstraction of the screen position when rendering the parts.
 
         // Draws background
-        canvas.drawColor(Color.WHITE);
+        canvas.drawColor(Color.GRAY);
 
         if (state != State.SHOWN) {
             return;
@@ -384,27 +394,27 @@ public class PDFView extends SurfaceView {
 
         // Draws the user layer
         if (onDrawListener != null) {
-            canvas.translate(toCurrentScale(currentFilteredPage * optimalPageWidth), 0);
+            canvas.translate(0, toCurrentScale(currentFilteredPage * optimalPageHeight));
 
             onDrawListener.onLayerDrawn(canvas, //
                     toCurrentScale(optimalPageWidth), //
                     toCurrentScale(optimalPageHeight),
                     currentPage);
 
-            canvas.translate(-toCurrentScale(currentFilteredPage * optimalPageWidth), 0);
+            canvas.translate(0, -toCurrentScale(currentFilteredPage * optimalPageHeight));
+
+            onDrawListener.onWholeDrawn(canvas, toCurrentScale(optimalPageWidth),
+                    toCurrentScale(getPageCount() * optimalPageHeight));
         }
 
         // Restores the canvas position
         canvas.translate(-currentXOffset, -currentYOffset);
 
-        // Draws mask around current page
-        canvas.drawRect(leftMask, maskPaint);
-        canvas.drawRect(rightMask, maskPaint);
-
         // If minimap shown draws it
         if (userWantsMinimap && miniMapRequired) {
             drawMiniMap(canvas);
         }
+
     }
 
     public void onLayerUpdate() {
@@ -420,10 +430,7 @@ public class PDFView extends SurfaceView {
         // Move to the target page
         float localTranslationX = 0;
         float localTranslationY = 0;
-        if (swipeVertical)
-        	localTranslationY = toCurrentScale(part.getUserPage() * optimalPageHeight);
-        else
-        	localTranslationX = toCurrentScale(part.getUserPage() * optimalPageWidth);    	
+        localTranslationY = toCurrentScale(part.getUserPage() * optimalPageHeight);
         canvas.translate(localTranslationX, localTranslationY);
         
         Rect srcRect = new Rect(0, 0, renderedBitmap.getWidth(), //
@@ -564,13 +571,8 @@ public class PDFView extends SurfaceView {
         float middleOfScreenY = (-currentYOffset + getHeight() / 2);
         float middleOfScreenPageX;
         float middleOfScreenPageY;
-        if (!swipeVertical) {
-        	middleOfScreenPageX = middleOfScreenX - userPage * toCurrentScale(optimalPageWidth);
-        	middleOfScreenPageY = middleOfScreenY;
-        } else {
-        	middleOfScreenPageY = middleOfScreenY - userPage * toCurrentScale(optimalPageHeight);
-        	middleOfScreenPageX = middleOfScreenX;
-        }
+        middleOfScreenPageY = middleOfScreenY - userPage * toCurrentScale(optimalPageHeight);
+        middleOfScreenPageX = middleOfScreenX;
         float middleOfScreenPageXRatio = middleOfScreenPageX / toCurrentScale(optimalPageWidth);
         float middleOfScreenPageYRatio = middleOfScreenPageY / toCurrentScale(optimalPageHeight);
         int startingRow = (int) (middleOfScreenPageYRatio * nbRows);
@@ -649,7 +651,7 @@ public class PDFView extends SurfaceView {
         this.pageWidth = decodeService.getPageWidth(0);
         this.pageHeight = decodeService.getPageHeight(0);
         state = State.LOADED;
-        calculateOptimalWidthAndHeight();
+        calculateOptimalWidthAndHeight(getWidth(), getHeight());
 
         // Notify the listener
         jumpTo(defaultPage);
@@ -703,40 +705,22 @@ public class PDFView extends SurfaceView {
      * @return The x/y-offset to use to have the pageNb centered.
      */
     private float calculateCenterOffsetForPage(int pageNb) {
-    	if (swipeVertical) {
-    		float imageY = -(pageNb * optimalPageHeight);
-	        imageY += getHeight() / 2 - optimalPageHeight / 2;
-	        return imageY;
-    	} else {
-	        float imageX = -(pageNb * optimalPageWidth);
-	        imageX += getWidth() / 2 - optimalPageWidth / 2;
-	        return imageX;
-    	}
+        float imageY = -(pageNb * optimalPageHeight);
+        imageY += getHeight() / 2 - optimalPageHeight / 2;
+        return imageY;
     }
 
     /**
      * Calculate the optimal width and height of a page
      * considering the area width and height
      */
-    private void calculateOptimalWidthAndHeight() {
-        if (state == State.DEFAULT || getWidth() == 0) {
+    private void calculateOptimalWidthAndHeight(int width, int height) {
+        /*if (state == State.DEFAULT || width == 0) {
             return;
-        }
+        }*/
+        optimalPageWidth = width;
+        optimalPageHeight = width * (pageHeight / (float)pageWidth);
 
-        float maxWidth = getWidth(), maxHeight = getHeight();
-        float w = pageWidth, h = pageHeight;
-        float ratio = w / h;
-        w = maxWidth;
-        h = (float) Math.floor(maxWidth / ratio);
-        if (h > maxHeight) {
-            h = maxHeight;
-            w = (float) Math.floor(maxHeight * ratio);
-        }
-
-        optimalPageWidth = w;
-        optimalPageHeight = h;
-
-        calculateMasksBounds();
         calculateMinimapBounds();
     }
 
@@ -779,11 +763,6 @@ public class PDFView extends SurfaceView {
         }
     }
 
-    /** Place the left and right masks around the current page. */
-    private void calculateMasksBounds() {
-        leftMask = new RectF(0, 0, getWidth() / 2 - toCurrentScale(optimalPageWidth) / 2, getHeight());
-        rightMask = new RectF(getWidth() / 2 + toCurrentScale(optimalPageWidth) / 2, 0, getWidth(), getHeight());
-    }
 
     /**
      * Move to the given X and Y offsets, but check them ahead of time
@@ -792,79 +771,26 @@ public class PDFView extends SurfaceView {
      * @param offsetY The big strip Y offset to use as the right border of the screen.
      */
     public void moveTo(float offsetX, float offsetY) {
-    	if (swipeVertical) {
-    		// Check X offset
-	        if (toCurrentScale(optimalPageWidth) < getWidth()) {
-	            offsetX = getWidth() / 2 - toCurrentScale(optimalPageWidth) / 2;
-	        } else {
-	            if (offsetX > 0) {
-	                offsetX = 0;
-	            } else if (offsetX + toCurrentScale(optimalPageWidth) < getWidth()) {
-	                offsetX = getWidth() - toCurrentScale(optimalPageWidth);
-	            }
-	        }
-	
-	        // Check Y offset
-	        if (isZooming()) {
-	            if (toCurrentScale(optimalPageHeight) < getHeight()) {
-	                miniMapRequired = false;
-	                offsetY = getHeight() / 2 - toCurrentScale((currentFilteredPage + 0.5f) * optimalPageHeight);
-	            } else {
-	                miniMapRequired = true;
-	                if (offsetY + toCurrentScale(currentFilteredPage * optimalPageHeight) > 0) {
-	                    offsetY = -toCurrentScale(currentFilteredPage * optimalPageHeight);
-	                } else if (offsetY + toCurrentScale((currentFilteredPage + 1) * optimalPageHeight) < getHeight()) {
-	                    offsetY = getHeight() - toCurrentScale((currentFilteredPage + 1) * optimalPageHeight);
-	                }
-	            }
-	
-	        } else {
-	
-	            float maxY = calculateCenterOffsetForPage(currentFilteredPage + 1);
-	            float minY = calculateCenterOffsetForPage(currentFilteredPage - 1);
-	            if (offsetY < maxY) {
-	                offsetY = maxY;
-	            } else if (offsetY > minY) {
-	                offsetY = minY;
-	            }
-	        }
-    	} else {
-	        // Check Y offset
-	        if (toCurrentScale(optimalPageHeight) < getHeight()) {
-	            offsetY = getHeight() / 2 - toCurrentScale(optimalPageHeight) / 2;
-	        } else {
-	            if (offsetY > 0) {
-	                offsetY = 0;
-	            } else if (offsetY + toCurrentScale(optimalPageHeight) < getHeight()) {
-	                offsetY = getHeight() - toCurrentScale(optimalPageHeight);
-	            }
-	        }
-	
-	        // Check X offset
-	        if (isZooming()) {
-	            if (toCurrentScale(optimalPageWidth) < getWidth()) {
-	                miniMapRequired = false;
-	                offsetX = getWidth() / 2 - toCurrentScale((currentFilteredPage + 0.5f) * optimalPageWidth);
-	            } else {
-	                miniMapRequired = true;
-	                if (offsetX + toCurrentScale(currentFilteredPage * optimalPageWidth) > 0) {
-	                    offsetX = -toCurrentScale(currentFilteredPage * optimalPageWidth);
-	                } else if (offsetX + toCurrentScale((currentFilteredPage + 1) * optimalPageWidth) < getWidth()) {
-	                    offsetX = getWidth() - toCurrentScale((currentFilteredPage + 1) * optimalPageWidth);
-	                }
-	            }
-	
-	        } else {
-	
-	            float maxX = calculateCenterOffsetForPage(currentFilteredPage + 1);
-	            float minX = calculateCenterOffsetForPage(currentFilteredPage - 1);
-	            if (offsetX < maxX) {
-	                offsetX = maxX;
-	            } else if (offsetX > minX) {
-	                offsetX = minX;
-	            }
-	        }
-    	}
+        // Check X
+        if(!isZooming()){
+            offsetX = 0;
+        } else {
+            if(offsetX > 0) {
+                offsetX = 0;
+            }
+            if(offsetX < getWidth() - toCurrentScale(optimalPageWidth)){
+                offsetX = getWidth() - toCurrentScale(optimalPageWidth);
+            }
+        }
+
+        // Check Y
+        if(offsetY > 0) {
+            offsetY = 0;
+        } else {
+            if(-offsetY > toCurrentScale(optimalPageHeight) * getPageCount() - getHeight()) {
+                offsetY = -toCurrentScale(optimalPageHeight) * getPageCount() + getHeight();
+            }
+        }
 
         currentXOffset = offsetX;
         currentYOffset = offsetY;
@@ -879,13 +805,14 @@ public class PDFView extends SurfaceView {
      * @see #moveTo(float, float)
      */
     public void moveRelativeTo(float dx, float dy) {
+        Log.d("###Y", currentYOffset + "");
+
         moveTo(currentXOffset + dx, currentYOffset + dy);
     }
 
     /** Change the zoom level */
     public void zoomTo(float zoom) {
         this.zoom = zoom;
-        calculateMasksBounds();
     }
 
     /**
@@ -946,6 +873,10 @@ public class PDFView extends SurfaceView {
         return optimalPageWidth;
     }
 
+    public float getOptimalPageHeight() {
+        return optimalPageHeight;
+    }
+
     private void setUserWantsMinimap(boolean userWantsMinimap) {
         this.userWantsMinimap = userWantsMinimap;
     }
@@ -1000,8 +931,6 @@ public class PDFView extends SurfaceView {
 
         private boolean showMinimap = false;
         
-        private boolean swipeVertical = false;
-
         private int maskColor = Color.BLACK;
 
         private int maskAlpha = Constants.MASK_ALPHA;
@@ -1045,11 +974,6 @@ public class PDFView extends SurfaceView {
             return this;
         }
         
-        public Configurator swipeVertical(boolean swipeVertical) {
-            this.swipeVertical = swipeVertical;
-            return this;
-        }
-
         /**
          * @param maskColor - mask color (default Color.BLACK)
          * @param maskAlpha - alpha value in [0,255] (default 20)
@@ -1069,8 +993,6 @@ public class PDFView extends SurfaceView {
             PDFView.this.enableDoubletap(enableDoubletap);
             PDFView.this.setDefaultPage(defaultPage);
             PDFView.this.setUserWantsMinimap(showMinimap);
-            PDFView.this.setSwipeVertical(swipeVertical);
-            PDFView.this.dragPinchManager.setSwipeVertical(swipeVertical);
             PDFView.this.maskPaint = new Paint();
             PDFView.this.maskPaint.setColor(maskColor);
             PDFView.this.maskPaint.setAlpha(maskAlpha);
@@ -1087,11 +1009,38 @@ public class PDFView extends SurfaceView {
         }
     }
 
-	public boolean isSwipeVertical() {
-		return swipeVertical;
-	}
-	
-	public void setSwipeVertical(boolean swipeVertical) {
-		this.swipeVertical = swipeVertical;
-	}
+    public void onDragStart() {
+        if(!mScroller.isFinished()) {
+            mScroller.abortAnimation();
+        }
+    }
+
+    /**
+     * fling is something like when you drag page fast and release
+     * cause a smooth scroll with this
+     * @param velocityX
+     * @param velocityY
+     */
+    public void fling(int velocityX, int velocityY) {
+        mScroller.fling((int)currentXOffset, (int)currentYOffset, velocityX, velocityY,
+                Integer.MIN_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MAX_VALUE);
+        postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                determinedCurrentPage();
+            }
+        }, mScroller.getDuration());
+        postInvalidate();
+    }
+
+    @Override
+    public void computeScroll() {
+        super.computeScroll();
+        // if scroller is functioning
+        if(mScroller.computeScrollOffset()) {
+            moveTo(mScroller.getCurrX(), mScroller.getCurrY());
+        }
+
+    }
+
 }

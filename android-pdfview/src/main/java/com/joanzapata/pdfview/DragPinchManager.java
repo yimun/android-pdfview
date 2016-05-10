@@ -19,6 +19,8 @@
 package com.joanzapata.pdfview;
 
 import android.graphics.PointF;
+import android.util.Log;
+
 import com.joanzapata.pdfview.PDFView;
 import com.joanzapata.pdfview.util.DragPinchListener;
 import com.joanzapata.pdfview.util.DragPinchListener.OnDoubleTapListener;
@@ -45,12 +47,9 @@ class DragPinchManager implements OnDragListener, OnPinchListener, OnDoubleTapLi
 
     private boolean isSwipeEnabled;
     
-    private boolean swipeVertical;
-
     public DragPinchManager(PDFView pdfView) {
         this.pdfView = pdfView;
         this.isSwipeEnabled = false;
-        this.swipeVertical = pdfView.isSwipeVertical();
         dragPinchListener = new DragPinchListener();
         dragPinchListener.setOnDragListener(this);
         dragPinchListener.setOnPinchListener(this);
@@ -82,36 +81,27 @@ class DragPinchManager implements OnDragListener, OnPinchListener, OnDoubleTapLi
         startDragTime = System.currentTimeMillis();
         startDragX = x;
         startDragY = y;
+        pdfView.onDragStart();
     }
 
     @Override
     public void onDrag(float dx, float dy) {
-        if (isZooming() || isSwipeEnabled) {
+        if (isSwipeEnabled) {
             pdfView.moveRelativeTo(dx, dy);
         }
     }
 
     @Override
     public void endDrag(float x, float y) {
-        if (!isZooming()) {
-            if (isSwipeEnabled) {
-            	float distance;
-            	if (swipeVertical)
-            		distance = y - startDragY;
-            	else
-	                distance = x - startDragX;
-            	
-                long time = System.currentTimeMillis() - startDragTime;
-                int diff = distance > 0 ? -1 : +1;
+        if(isSwipeEnabled) {
+            pdfView.determinedCurrentPage();
+        }
+    }
 
-                if (isQuickMove(distance, time) || isPageChange(distance)) {
-                    pdfView.showPage(pdfView.getCurrentPage() + diff);
-                } else {
-                    pdfView.showPage(pdfView.getCurrentPage());
-                }
-            }
-        } else {
-            pdfView.loadPages();
+    @Override
+    public void onFling(float velocityX, float velocityY) {
+        if(isSwipeEnabled) {
+            pdfView.fling((int)velocityX, (int)velocityY);
         }
     }
 
@@ -120,7 +110,7 @@ class DragPinchManager implements OnDragListener, OnPinchListener, OnDoubleTapLi
     }
 
     private boolean isPageChange(float distance) {
-        return Math.abs(distance) > Math.abs(pdfView.toCurrentScale(pdfView.getOptimalPageWidth()) / 2);
+        return Math.abs(distance) > Math.abs(pdfView.toCurrentScale(pdfView.getOptimalPageHeight()) / 2);
     }
 
     private boolean isQuickMove(float dx, long dt) {
@@ -138,9 +128,5 @@ class DragPinchManager implements OnDragListener, OnPinchListener, OnDoubleTapLi
             pdfView.resetZoomWithAnimation();
         }
     }
-
-	public void setSwipeVertical(boolean swipeVertical) {
-		this.swipeVertical = swipeVertical;
-	}
 
 }
